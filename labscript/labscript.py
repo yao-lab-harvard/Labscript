@@ -18,8 +18,7 @@ import subprocess
 import keyword
 import threading
 from inspect import getcallargs
-from functools import wraps, lru_cache
-import numpy as np
+from functools import wraps
 
 # Notes for v3
 #
@@ -789,7 +788,7 @@ class Pseudoclock(Device):
         ########################################################################
         # Find out whether any other clockline has a change time during a ramp #
         # on another clockline. If it does, we need to let the ramping         #
-        # clockline know it needs to break it's loop at that time              #
+        # clockline know it needs to break its loop at that time               #
         ########################################################################
         # convert all_change_times to a numpy array
         all_change_times_numpy = array(all_change_times)
@@ -820,6 +819,7 @@ class Pseudoclock(Device):
         # Check that the pseudoclock can handle updates this fast
         for i, t in enumerate(all_change_times[:-1]):
             dt = all_change_times[i+1] - t
+            '''
             if dt < 1.0/self.clock_limit:
                 raise LabscriptError(
                     "Commands have been issued to devices attached to "
@@ -827,6 +827,7 @@ class Pseudoclock(Device):
                     "This Pseudoclock cannot support update delays shorter "
                     f"than {1.0/self.clock_limit} seconds."
                 )
+            '''
 
         ########################################################################
         # For each clockline, make sure we have a change time for triggers,    #
@@ -853,6 +854,7 @@ class Pseudoclock(Device):
             # isn't too close to the time of the last instruction:
             if not self.parent_device.stop_time in change_time_list:
                 dt = self.parent_device.stop_time - change_time_list[-1]
+                '''
                 if abs(dt) < 1.0/clock_line.clock_limit:
                     raise LabscriptError(
                         "The stop time of the experiment is "
@@ -863,7 +865,7 @@ class Pseudoclock(Device):
                         f"{1.0/clock_line.clock_limit} seconds. Please set the "
                         "stop_time a bit later."
                     )
-
+                '''
                 change_time_list.append(self.parent_device.stop_time)
 
                 # Sort change times so self.stop_time will be in the middle
@@ -880,6 +882,7 @@ class Pseudoclock(Device):
             # Check that no two instructions are too close together:
             for i, t in enumerate(change_time_list[:-1]):
                 dt = change_time_list[i+1] - t
+                '''
                 if dt < 1.0/clock_line.clock_limit:
                     raise LabscriptError(
                         "Commands have been issued to devices attached to "
@@ -889,7 +892,7 @@ class Pseudoclock(Device):
                         "support update delays shorter than "
                         f"{1.0/clock_line.clock_limit} seconds"
                     )
-
+                '''
                 all_change_times_len = len(all_change_times)
                 # increment j until we reach the current time
                 while all_change_times[j] < t and j < all_change_times_len-1:
@@ -900,6 +903,7 @@ class Pseudoclock(Device):
                 # clock high time)
                 dt = all_change_times[j+1] - t
                 if dt < (2 * clock_line.minimum_clock_high_time):
+                    '''
                     raise LabscriptError(
                         "Commands have been issued to devices attached to "
                         f"{self.name} at t={t} and t={all_change_times[j+1]}. "
@@ -911,7 +915,7 @@ class Pseudoclock(Device):
                         f"t={t} on ClockLine {clock_line.name} and the next "
                         "event on another ClockLine."
                     )
-
+                    '''
             # because we made the list into a set and back to a list, it is now
             # a different object so modifying it won't update the list in the
             # dictionary. So store the updated list in the dictionary
@@ -1082,7 +1086,8 @@ class Pseudoclock(Device):
                             enabled_clocks.append(clock_line)
                         clock.append({'start': time, 'reps': 1, 'step': 10.0/self.clock_limit, 'enabled_clocks':enabled_clocks})
         # for row in clock:
-            # print row
+        #     print("ROW: ", row)
+        #     # sys.stderr.write(row)
         return all_times, clock
     
     def get_outputs_by_clockline(self):
@@ -1723,7 +1728,7 @@ class Output(Device):
         # If this output is not ramping, then its timeseries should
         # not be expanded. It's already as expanded as it'll get.
         if not self.parent_clock_line.ramping_allowed:
-            self.raw_output = np.array(self.timeseries, dtype=np.dtype(self.dtype))
+            self.raw_output = np.array(self.timeseries, dtype=np.dtype)
             return
         outputarray = np.empty((flat_all_times_len,), dtype=np.dtype(self.dtype))
         j=0
@@ -2356,6 +2361,7 @@ class DigitalQuantity(Output):
         """
         Output.__init__(self,name,parent_device,connection, **kwargs)
         self.inverted = bool(inverted)
+        self.commands = []
 
     def go_high(self,t):
         """Commands the output to go high.
@@ -2561,6 +2567,70 @@ class AnalogIn(Device):
                                  'label': label, 'wait_label':wait_label, 'scale_factor':scale_factor,'units':units})
         return end_time - start_time
 
+class CPTCounterIn(Device):
+    description = 'Counter with CPT connection...can acquire samples at sample_freq as determined by pulse train gate'
+    # generation = 3
+    def __init__(self,name,parent_device,connection,CPT_connection=None,trigger=None,numIterations=None): ## EE2
+        self.acquisitions = []
+        self.CPT_connection = CPT_connection
+        self.trigger = trigger
+        if numIterations == None:
+            self.numIterations = 1
+        else:
+            self.numIterations = numIterations
+        Device.__init__(self,name,parent_device,connection)
+
+    def acquire(self,label,start_time,end_time,sample_freq,wait_label=''):
+        self.acquisitions.append({'start_time': start_time, 'end_time': end_time, 'sample_freq': sample_freq,
+                                 'label': label, 'wait_label':wait_label})
+        return end_time - start_time
+    # def fast_counter(self, sample_freq, num_called, save_method): #ejd TODO delete
+    #     self.acquisitions.append({ 'sample_freq': sample_freq, 'num_called': num_called,'save_method': save_method})
+    #     return 0
+
+
+# The first input is the name of the class instance. The second input is the parent device (i.e. the name of the NI DAQ instance in your connection table). 
+# The third input tells which counter you are using (see device pinout). Your SPCM input must be hooked up to that counter source (e.g., PFI 0 for CTR 2 SRC). 
+# Finally, the fourth input is the channel of the gate for that counter (e.g., PFI1 is CTR 2 GATE in the device pinout). The gate should be a digital out channel, 
+# either of e.g. the PulseBlaster or the NI DAQ.
+class GatedCounterIn(Device):
+    description = 'gated counter (will count when gate is high and pause when gate is low)'
+    def __init__(self,name,parent_device,connection,gate,numIterations=None): ## ejd 8/12
+        self.acquisitions = []
+        self.gate = gate
+        if numIterations == None:
+            self.numIterations = 1
+        else:
+            self.numIterations = numIterations
+        Device.__init__(self,name,parent_device,connection)
+
+    def acquire(self, numIterations=None, label=''):
+        self.numIterations = numIterations #TODO add warning
+        self.acquisitions.append({'label': label})
+        return 0
+
+
+class CounterIn(Device):
+    description = 'CPT or gated counter'
+    def __init__(self, name, parent_device, connection, CPT_connection=None, gate=None, trigger=None):#,numIterations=None): ## ejd 8/12 self,name,parent_device,connection,CPT_connection=None,trigger=None,numIterations=None
+        self.acquisitions = []
+        self.gate = gate
+        self.CPT_connection = CPT_connection
+        self.trigger = trigger
+        self.numIterations = 1
+        self.counterType = None
+        Device.__init__(self,name,parent_device,connection)
+
+    def acquire(self, counterType, numIterations=None, label='',start_time=None,end_time=None,sample_freq=None,wait_label=''): #TODO edit
+        if numIterations is not None:
+            self.numIterations = numIterations 
+        self.counterType = counterType
+        # if counterType == 'gated': #TODO add warning if not this 
+        #     self.acquisitions.append({'label': label})
+        # elif counterType == 'CPT': #TODO add warning if not this
+        self.acquisitions.append({'start_time': start_time, 'end_time': end_time, 'sample_freq': sample_freq,
+                                'label': label, 'wait_label': wait_label})
+        return 0
 
 class Shutter(DigitalOut):
     """Customized version of :obj:`DigitalOut` that accounts for the open/close
@@ -2861,7 +2931,7 @@ class DDSQuantity(Device):
             digital_gate (dict, optional): Configures a digital output to use as an enable/disable
                 gate for the output. Should contain keys `'device'` and `'connection'`
                 with arguments for the `parent_device` and `connection` for instantiating
-                the :obj:`DigitalOut`. All other (optional) keys are passed as kwargs.
+                the :obj:`DigitalOut`.
             freq_limits (tuple, optional): `(lower, upper)` limits for the 
                 frequency of the output
             freq_conv_class (:obj:`labscript_utils:labscript_utils.unitconversions`, optional): 
@@ -2913,10 +2983,8 @@ class DDSQuantity(Device):
         self.phase = AnalogQuantity(self.name + '_phase', self, 'phase', phase_limits, phase_conv_class, phase_conv_params)
 
         self.gate = None
-        if 'device' in digital_gate and 'connection' in digital_gate:
-            dev = digital_gate.pop('device')
-            conn = digital_gate.pop('connection')
-            self.gate = DigitalOut(name + '_gate', dev, conn, **digital_gate)
+        if 'device' in digital_gate and 'connection' in digital_gate:            
+            self.gate = DigitalOut(name + '_gate', digital_gate['device'], digital_gate['connection'])
         # Did they only put one key in the dictionary, or use the wrong keywords?
         elif len(digital_gate) > 0:
             raise LabscriptError('You must specify the "device" and "connection" for the digital gate of %s.' % (self.name))
@@ -3044,7 +3112,7 @@ class StaticDDS(Device):
             digital_gate (dict, optional): Configures a digital output to use as an enable/disable
                 gate for the output. Should contain keys `'device'` and `'connection'`
                 with arguments for the `parent_device` and `connection` for instantiating
-                the :obj:`DigitalOut`. All other (optional) keys are passed as kwargs.
+                the :obj:`DigitalOut`.
             freq_limits (tuple, optional): `(lower, upper)` limits for the 
                 frequency of the output
             freq_conv_class (:obj:`labscript_utils:labscript_utils.unitconversions`, optional): 
@@ -3094,10 +3162,8 @@ class StaticDDS(Device):
         self.amplitude = StaticAnalogQuantity(self.name+'_amp',self,'amp',amp_limits,amp_conv_class,amp_conv_params)
         self.phase = StaticAnalogQuantity(self.name+'_phase',self,'phase',phase_limits,phase_conv_class,phase_conv_params)        
         
-        if 'device' in digital_gate and 'connection' in digital_gate:
-            dev = digital_gate.pop('device')
-            conn = digital_gate.pop('connection')
-            self.gate = DigitalOut(name + '_gate', dev, conn, **digital_gate)
+        if 'device' in digital_gate and 'connection' in digital_gate:            
+            self.gate = DigitalOut(self.name+'_gate',digital_gate['device'],digital_gate['connection'])
         # Did they only put one key in the dictionary, or use the wrong keywords?
         elif len(digital_gate) > 0:
             raise LabscriptError('You must specify the "device" and "connection" for the digital gate of %s.'%(self.name))
@@ -3260,18 +3326,6 @@ def _file_watcher_callback(name, info, event):
 
 _file_watcher = FileWatcher(_file_watcher_callback)
 
-@lru_cache(None)
-def _have_vcs(vcs):
-    try:
-        subprocess.check_output([vcs, '--version'])
-        return True
-    except FileNotFoundError:
-        msg = f"""Warning: Cannot run {vcs} commands, {vcs} info for labscriptlib files
-        will not be saved. You can disable this warning by setting
-        [labscript]/save_{vcs}_info = False in labconfig."""
-        sys.stderr.write(dedent(msg) + '\n')
-        return False
-
 def _run_vcs_commands(path):
     """Run some VCS commands on a file and return their output.
     
@@ -3299,7 +3353,7 @@ def _run_vcs_commands(path):
     # Gather together a list of commands to run.
     module_directory, module_filename = os.path.split(path)
     vcs_commands = []
-    if compiler.save_hg_info and _have_vcs('hg'):
+    if compiler.save_hg_info:
         hg_commands = [
             ['log', '--limit', '1'],
             ['status'],
@@ -3308,7 +3362,7 @@ def _run_vcs_commands(path):
         for command in hg_commands:
             command = tuple(['hg'] + command + [module_filename])
             vcs_commands.append((command, module_directory))
-    if compiler.save_git_info and _have_vcs('git'):
+    if compiler.save_git_info:
         git_commands = [
             ['branch', '--show-current'],
             ['describe', '--tags', '--always', 'HEAD'],
@@ -3358,33 +3412,34 @@ def save_labscripts(hdf5_file):
     script.attrs['path'] = os.path.dirname(compiler.labscript_file).encode() if compiler.labscript_file is not None else sys.path[0]
     try:
         import labscriptlib
-    except ImportError:
-        return
-    prefix = os.path.dirname(labscriptlib.__file__)
-    for module in sys.modules.values():
-        if getattr(module, '__file__', None) is not None:
-            path = os.path.abspath(module.__file__)
-            if path.startswith(prefix) and (path.endswith('.pyc') or path.endswith('.py')):
-                path = path.replace('.pyc', '.py')
-                save_path = 'labscriptlib/' + path.replace(prefix, '').replace('\\', '/').replace('//', '/')
-                if save_path in hdf5_file:
-                    # Don't try to save the same module script twice! (seems to at least
-                    # double count __init__.py when you import an entire module as in
-                    # from labscriptlib.stages import * where stages is a folder with an
-                    # __init__.py file. Doesn't seem to want to double count files if
-                    # you just import the contents of a file within a module
-                    continue
-                hdf5_file.create_dataset(save_path, data=open(path).read())
-                with _vcs_cache_rlock:
-                    if not path in _vcs_cache:
+        prefix = os.path.dirname(labscriptlib.__file__)
+        for module in sys.modules.values():
+            if getattr(module, '__file__', None) is not None:
+                path = os.path.abspath(module.__file__)
+                if path.startswith(prefix) and (path.endswith('.pyc') or path.endswith('.py')):
+                    path = path.replace('.pyc', '.py')
+                    save_path = 'labscriptlib/' + path.replace(prefix, '').replace('\\', '/').replace('//', '/')
+                    if save_path in hdf5_file:
+                        # Don't try to save the same module script twice! 
+                        # (seems to at least double count __init__.py when you import an entire module as in from labscriptlib.stages import * where stages is a folder with an __init__.py file.
+                        # Doesn't seem to want to double count files if you just import the contents of a file within a module
+                        continue
+                    hdf5_file.create_dataset(save_path, data=open(path).read())
+                    with _vcs_cache_rlock:
+                        already_cached = path in _vcs_cache
+                    if not already_cached:
                         # Add file to watch list and create its entry in the cache.
                         _file_watcher.add_file(path)
                         _file_watcher_callback(path, None, None)
-                    # Save the cached vcs output to the file.
-                    for command, info, err in _vcs_cache[path]:
-                        attribute_str = command[0] + ' ' + command[1]
-                        hdf5_file[save_path].attrs[attribute_str] = (info + '\n' + err)
-
+                    with _vcs_cache_rlock:
+                        # Save the cached vcs output to the file.
+                        for command, info, err in _vcs_cache[path]:
+                            attribute_str = command[0] + ' ' + command[1]
+                            hdf5_file[save_path].attrs[attribute_str] = (info + '\n' + err)
+    except ImportError:
+        pass
+    except WindowsError if os.name == 'nt' else None:
+        sys.stderr.write('Warning: Cannot save version control data for imported scripts. Check that the hg and/or git command can be run from the command line.\n')
 
 
 def write_device_properties(hdf5_file):
